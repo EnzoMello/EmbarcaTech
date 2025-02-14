@@ -22,12 +22,6 @@
 
 ssd1306_t display;
 
-// Definições para comunicação Serial (UART)
-#define UART_ID uart0
-#define BAUD_RATE 115200
-#define RX_PIN 8
-#define TX_PIN 9
-
 // Definições de Rede
 #define WIFI_SSID "moto g(9) power_6168"
 #define WIFI_PASSWORD "ENZOMELO10"
@@ -36,6 +30,9 @@ ssd1306_t display;
 // Variável global para armazenar a temperatura do servidor
 float server_temperature = 0.0f;
 
+// Limite de discrepância para alerta
+#define TEMPERATURE_ALERT_LIMIT 5.0f  // Limite de 5°C para alerta
+
 // Função para ler a temperatura interna
 float read_internal_temperature() {
     uint16_t adc_value = adc_read();
@@ -43,19 +40,70 @@ float read_internal_temperature() {
     return 27.0f - (voltage - 0.706f) / 0.001721f;
 }
 
-// Exibir temperaturas no OLED
-void display_temperatures(float sensor_temp, float server_temp) {
+// Exibir temperaturas no OLED com mensagens ajustadas
+void display_temperatures(float sensor_temp, float server_temp, const char* alert_msg) {
     char buffer[32];
+    int line = 0;
 
     ssd1306_clear(&display);
 
     snprintf(buffer, sizeof(buffer), "Sensor: %.2f C", sensor_temp);
-    ssd1306_draw_string(&display, 0, 0, 1, buffer);
+    ssd1306_draw_string(&display, 0, line * 10, 1, buffer);
+    line++;
 
     snprintf(buffer, sizeof(buffer), "Servidor: %.2f C", server_temp);
-    ssd1306_draw_string(&display, 0, 16, 1, buffer);
+    ssd1306_draw_string(&display, 0, line * 10, 1, buffer);
+    line++;
+
+    // Quebra a mensagem de alerta em várias linhas, se necessário
+    int alert_length = strlen(alert_msg);
+    int start = 0;
+    while (start < alert_length) {
+        char temp_msg[32];
+        int len = (alert_length - start > 16) ? 16 : alert_length - start;  // Limita a 16 caracteres por linha
+        strncpy(temp_msg, alert_msg + start, len);
+        temp_msg[len] = '\0';  // Garantir a terminação nula
+
+        ssd1306_draw_string(&display, 0, line * 10, 1, temp_msg);
+        line++;
+
+        start += len;
+    }
 
     ssd1306_show(&display);
+}
+
+// Função para controlar o LED RGB (vermelho para calor, azul para frio, piscando)
+void control_led_alert(float sensor_temp, float server_temp, int *led_state, int *last_change_time) {
+    float discrepancy = sensor_temp - server_temp;
+
+    // Tempo de controle para piscar os LEDs (em milissegundos)
+    int current_time = to_ms_since_boot(get_absolute_time());
+
+    if (discrepancy > TEMPERATURE_ALERT_LIMIT) {
+        // Alerta de calor - Pisca LED vermelho
+        if (current_time - *last_change_time > 200) {  // Piscar a cada 200 ms
+            *led_state = !*led_state;  // Alterna o estado do LED
+            gpio_put(LED_R_PIN, *led_state);
+            gpio_put(LED_B_PIN, 0);
+            gpio_put(LED_G_PIN, 0);
+            *last_change_time = current_time;
+        }
+    } else if (discrepancy < -TEMPERATURE_ALERT_LIMIT) {
+        // Alerta de frio - Pisca LED azul
+        if (current_time - *last_change_time > 200) {  // Piscar a cada 200 ms
+            *led_state = !*led_state;  // Alterna o estado do LED
+            gpio_put(LED_R_PIN, 0);
+            gpio_put(LED_B_PIN, *led_state);
+            gpio_put(LED_G_PIN, 0);
+            *last_change_time = current_time;
+        }
+    } else {
+        // Temperatura dentro do limite - LED verde
+        gpio_put(LED_R_PIN, 0);
+        gpio_put(LED_B_PIN, 0);
+        gpio_put(LED_G_PIN, 1);
+    }
 }
 
 // Função de callback para receber dados TCP
@@ -141,6 +189,14 @@ int main() {
         return 1;
     }
 
+    // Inicializar LEDs RGB
+    gpio_init(LED_R_PIN);
+    gpio_init(LED_B_PIN);
+    gpio_init(LED_G_PIN);
+    gpio_set_dir(LED_R_PIN, GPIO_OUT);
+    gpio_set_dir(LED_B_PIN, GPIO_OUT);
+    gpio_set_dir(LED_G_PIN, GPIO_OUT);
+
     // Inicializar Wi-Fi
     printf("Iniciando WiFi...\n");
     cyw43_arch_init();
@@ -158,13 +214,34 @@ int main() {
     tcp_server();
 
     float sensor_temperature = 0.0f;
+    char alert_message[128] = "";
+
+    // Variáveis para controlar o estado e tempo de mudança do LED
+    int led_state = 0;
+    int last_change_time = 0;
+
+    // Alterando o valor da temperatura recebida para teste
+    server_temperature = 24.84f + 30.0f;  // Temperatura recebida do servidor com incremento de 30°C
 
     while (true) {
         // Ler a temperatura do sensor interno
         sensor_temperature = read_internal_temperature();
 
+        // Verificar a discrepância e gerar o alerta
+        float discrepancy = sensor_temperature - server_temperature;
+        if (discrepancy > TEMPERATURE_ALERT_LIMIT) {
+            snprintf(alert_message, sizeof(alert_message), "ALERTA: Calor acima do limite seguro de 5 C");
+        } else if (discrepancy < -TEMPERATURE_ALERT_LIMIT) {
+            snprintf(alert_message, sizeof(alert_message), "ALERTA: Frio abaixo do limite seguro de 5 C");
+        } else {
+            snprintf(alert_message, sizeof(alert_message), "Temperatura dentro do limite seguro de 5 C");
+        }
+
         // Exibir as temperaturas no OLED
-        display_temperatures(sensor_temperature, server_temperature);
+        display_temperatures(sensor_temperature, server_temperature, alert_message);
+
+        // Controlar o LED de alerta (com piscar)
+        control_led_alert(sensor_temperature, server_temperature, &led_state, &last_change_time);
 
         sleep_ms(2000);
     }

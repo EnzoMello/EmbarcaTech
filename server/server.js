@@ -1,60 +1,53 @@
-require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-const net = require('net'); // Usaremos o módulo net para TCP
+const net = require('net');
+const cors = require('cors'); // Importa o CORS
 
 const app = express();
 const PORT = 3000;
+const API_KEY = '5d30ae41d98933aef6c4a1dd07a83f69';
+const BITDOG_IP = '192.168.122.47'; // Ajuste para o IP da sua placa
+const BITDOG_PORT = 8050; // Porta usada para comunicação
 
-const API_KEY = process.env.API_KEY;
-const PLACA_IP = '192.168.122.47'; // Substitua pelo IP da sua placa
-const PLACA_PORT = 8050; // A mesma porta TCP configurada na sua placa
+app.use(cors()); // Habilita CORS para permitir requisições do frontend
+app.use(express.json());
+app.use(express.static('frontend'));
 
-// Criação de um cliente TCP para enviar dados para a placa
-const sendDataToPlaca = (temperatura) => {
-    const client = new net.Socket();
+app.post('/temperatura', async (req, res) => {
+    const { cidade } = req.body;
+    
+    if (!cidade) {
+        return res.status(400).json({ erro: "Cidade não fornecida" });
+    }
 
-    client.connect(PLACA_PORT, PLACA_IP, () => {
-        console.log('Conectado à placa');
-        // Envia os dados da temperatura
-        client.write(`${temperatura}\n`);
-    });
-
-    client.on('data', (data) => {
-        console.log('Dados recebidos da placa:', data.toString());
-        client.destroy(); // Encerra a conexão após receber resposta
-    });
-
-    client.on('error', (err) => {
-        console.error('Erro na conexão TCP:', err.message);
-    });
-
-    client.on('close', () => {
-        console.log('Conexão TCP fechada');
-    });
-};
-
-// Rota para buscar dados da API do clima
-app.get('/clima/:cidade', async (req, res) => {
     try {
-        const cidade = req.params.cidade;
-        const url = `https://api.openweathermap.org/data/2.5/weather?q=${cidade}&appid=${API_KEY}&units=metric&lang=pt`;
-
+        const url = `https://api.openweathermap.org/data/2.5/weather?q=${cidade}&units=metric&appid=${API_KEY}&lang=pt_br`;
         const resposta = await axios.get(url);
         const temperatura = resposta.data.main.temp;
 
         console.log(`Temperatura em ${cidade}: ${temperatura}°C`);
-
-        // Envia os dados da temperatura para a placa via TCP
-        sendDataToPlaca(temperatura);
+        enviarParaPlaca(temperatura);
 
         res.json({ cidade, temperatura });
-    } catch (error) {
-        console.error("Erro ao buscar dados da API:", error.message);
-        res.status(500).json({ erro: 'Erro ao buscar dados da API' });
+    } catch (erro) {
+        res.status(500).json({ erro: "Erro ao buscar temperatura" });
     }
 });
 
+function enviarParaPlaca(temperatura) {
+    const cliente = new net.Socket();
+    
+    cliente.connect(BITDOG_PORT, BITDOG_IP, () => {
+        console.log(`Enviando temperatura: ${temperatura}°C`);
+        cliente.write(temperatura.toString());
+        cliente.end();
+    });
+
+    cliente.on('error', (err) => {
+        console.error('Erro na conexão TCP:', err);
+    });
+}
+
 app.listen(PORT, () => {
-    console.log(`Servidor rodando em http://localhost:${PORT}`);
+    console.log(`Servidor rodando na porta ${PORT}`);
 });

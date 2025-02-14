@@ -35,7 +35,7 @@ ssd1306_t display;
 float server_temperature = 0.0f;
 
 // Limite de discrepância para alerta
-#define TEMPERATURE_ALERT_LIMIT 5.0f  // Limite de 5°C para alerta
+#define TEMPERATURE_ALERT_LIMIT 10.0f  // Limite de 5°C para alerta
 
 void display_message(const char *message) {
     ssd1306_clear(&display);
@@ -43,12 +43,6 @@ void display_message(const char *message) {
     ssd1306_show(&display);
 }
 
-// Função para ler a temperatura interna
-float read_internal_temperature() {
-    uint16_t adc_value = adc_read();
-    float voltage = adc_value * (3.3f / (1 << 12)); // 12-bit ADC resolution
-    return 27.0f - (voltage - 0.706f) / 0.001721f;
-}
 
 // Exibir temperaturas no OLED com mensagens ajustadas
 void display_temperatures(float sensor_temp, float server_temp, const char* alert_msg) {
@@ -57,11 +51,11 @@ void display_temperatures(float sensor_temp, float server_temp, const char* aler
 
     ssd1306_clear(&display);
 
-    snprintf(buffer, sizeof(buffer), "Sensor: %.2f C", sensor_temp);
+    snprintf(buffer, sizeof(buffer), "Local atual: %.2f C", sensor_temp);
     ssd1306_draw_string(&display, 0, line * 10, 1, buffer);
     line++;
 
-    snprintf(buffer, sizeof(buffer), "Servidor: %.2f C", server_temp);
+    snprintf(buffer, sizeof(buffer), "Cidade atual: %.2f C", server_temp);
     ssd1306_draw_string(&display, 0, line * 10, 1, buffer);
     line++;
 
@@ -70,7 +64,7 @@ void display_temperatures(float sensor_temp, float server_temp, const char* aler
     int start = 0;
     while (start < alert_length) {
         char temp_msg[32];
-        int len = (alert_length - start > 16) ? 16 : alert_length - start;  // Limita a 16 caracteres por linha
+        int len = (alert_length - start > 16) ? 17 : alert_length - start;  // Limita a 16 caracteres por linha
         strncpy(temp_msg, alert_msg + start, len);
         temp_msg[len] = '\0';  // Garantir a terminação nula
 
@@ -89,16 +83,43 @@ void my_callback_function(uint pin, uint32_t event) {
     if (pin == BUTTON_HOT_PIN) {
         printf("\nbotão B pressionado\n");
         display_message("Mantenha-se hidratado!");
-        // sleep_ms(2000);
     }
     
     // caso a interrupção tenha vindo do botão B
     if(pin == BUTTON_COLD_PIN) {
         printf("\nbotão A pressionado\n");
         display_message("Mantenha-se aquecido!");
-        // sleep_ms(2000);
     }
 }
+
+void tmp_init(){
+    adc_init(); // Inicializa o ADC
+    adc_gpio_init(28); // Habilita o GPIO 18 como entrada analógica
+    adc_select_input(2); // O GPIO 18 corresponde ao canal ADC2
+};
+
+float get_temp() {
+    int num_readings = 10;  // Número de leituras para a média
+    float sum = 0.0f;
+
+    // Ler múltiplos valores e somá-los
+    for (int i = 0; i < num_readings; i++) {
+        uint16_t raw_value = adc_read();
+        float voltage = (raw_value * 3.3f) / (1 << 12);
+        sum += voltage;
+        sleep_ms(10);  // Espera um pouco entre as leituras para evitar leituras muito rápidas
+    }
+
+    // Calcular a média das leituras
+    float avg_voltage = sum / num_readings;
+
+    // Aplicar um fator de escala para reduzir a sensibilidade
+    float temperature = (avg_voltage - 0.5f) / (0.02f * 2); // Diminuir a sensibilidade multiplicando por 2
+
+    return temperature;
+}
+
+
 
 // Função para configurar os botões como entradas
 void setup_buttons() {
@@ -213,9 +234,9 @@ void tcp_server(void) {
 int main() {
     // Inicializar entradas e saídas padrão
     stdio_init_all();
-    adc_init();
-    adc_set_temp_sensor_enabled(true);
-    adc_select_input(4);
+
+    tmp_init();
+    
 
     i2c_init(i2c1, 400 * 1000);
     gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
@@ -263,21 +284,18 @@ int main() {
     int led_state = 0;
     int last_change_time = 0;
 
-    // Alterando o valor da temperatura recebida para teste
-    server_temperature = 24.84f + 30.0f;  // Temperatura recebida do servidor com incremento de 30°C
-
     while (true) {
         // Ler a temperatura do sensor interno
-        sensor_temperature = read_internal_temperature();
+        sensor_temperature = get_temp();
 
         // Verificar a discrepância e gerar o alerta
         float discrepancy = sensor_temperature - server_temperature;
         if (discrepancy > TEMPERATURE_ALERT_LIMIT) {
-            snprintf(alert_message, sizeof(alert_message), "ALERTA: Calor acima do limite seguro de 5 C");
+            snprintf(alert_message, sizeof(alert_message), "ALERTA-> Calor local prejudicial, aperte botao B");
         } else if (discrepancy < -TEMPERATURE_ALERT_LIMIT) {
-            snprintf(alert_message, sizeof(alert_message), "ALERTA: Frio abaixo do limite seguro de 5 C");
+            snprintf(alert_message, sizeof(alert_message), "ALERTA-> Frio local prejudicial, aperte botao A");
         } else {
-            snprintf(alert_message, sizeof(alert_message), "Temperatura dentro do limite seguro de 5 C");
+            snprintf(alert_message, sizeof(alert_message), "Temperatura ambiente segura");
         }
 
         // Exibir as temperaturas no OLED

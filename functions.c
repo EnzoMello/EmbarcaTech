@@ -20,10 +20,6 @@
 #define LED_B_PIN 12
 #define LED_G_PIN 11
 
-// BOTÕES
-#define BUTTON_HOT_PIN 5
-#define BUTTON_COLD_PIN 6
-
 ssd1306_t display;
 
 // Definições de Rede
@@ -36,12 +32,6 @@ float server_temperature = 0.0f;
 
 // Limite de discrepância para alerta
 #define TEMPERATURE_ALERT_LIMIT 5.0f  // Limite de 5°C para alerta
-
-void display_message(const char *message) {
-    ssd1306_clear(&display);
-    ssd1306_draw_string(&display, 10, 25, 1, message);
-    ssd1306_show(&display);
-}
 
 // Função para ler a temperatura interna
 float read_internal_temperature() {
@@ -81,36 +71,6 @@ void display_temperatures(float sensor_temp, float server_temp, const char* aler
     }
 
     ssd1306_show(&display);
-}
-
-void my_callback_function(uint pin, uint32_t event) {
-
-    // caso a interrupção tenha vindo do botão A
-    if (pin == BUTTON_HOT_PIN) {
-        printf("\nbotão B pressionado\n");
-        display_message("Mantenha-se hidratado!");
-        // sleep_ms(2000);
-    }
-    
-    // caso a interrupção tenha vindo do botão B
-    if(pin == BUTTON_COLD_PIN) {
-        printf("\nbotão A pressionado\n");
-        display_message("Mantenha-se aquecido!");
-        // sleep_ms(2000);
-    }
-}
-
-// Função para configurar os botões como entradas
-void setup_buttons() {
-    gpio_init(BUTTON_HOT_PIN);
-    gpio_set_dir(BUTTON_HOT_PIN, GPIO_IN);
-    gpio_pull_up(BUTTON_HOT_PIN);
-    gpio_set_irq_enabled_with_callback(BUTTON_HOT_PIN, GPIO_IRQ_EDGE_FALL, true, &my_callback_function);
-
-    gpio_init(BUTTON_COLD_PIN);
-    gpio_set_dir(BUTTON_COLD_PIN, GPIO_IN);
-    gpio_pull_up(BUTTON_COLD_PIN);
-    gpio_set_irq_enabled(BUTTON_COLD_PIN, GPIO_IRQ_EDGE_FALL, true);
 }
 
 // Função para controlar o LED RGB (vermelho para calor, azul para frio, piscando)
@@ -237,9 +197,6 @@ int main() {
     gpio_set_dir(LED_B_PIN, GPIO_OUT);
     gpio_set_dir(LED_G_PIN, GPIO_OUT);
 
-    // Inicializar os botões
-    setup_buttons();
-
     // Inicializar Wi-Fi
     printf("Iniciando WiFi...\n");
     cyw43_arch_init();
@@ -285,8 +242,8 @@ int main() {
 
         // Controlar o LED de alerta (com piscar)
         control_led_alert(sensor_temperature, server_temperature, &led_state, &last_change_time);
-        tight_loop_contents();      // Mantém o processador ativo para interrupções
-        sleep_ms(1000); 
+
+        sleep_ms(2000);
     }
 
     return 0;

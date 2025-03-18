@@ -94,8 +94,8 @@ void my_callback_function(uint pin, uint32_t event) {
 
 void tmp_init(){
     adc_init(); // Inicializa o ADC
-    adc_gpio_init(28); // Habilita o GPIO 18 como entrada analógica
-    adc_select_input(2); // O GPIO 18 corresponde ao canal ADC2
+    adc_gpio_init(28); // Habilita o GPIO 28 como entrada analógica
+    adc_select_input(2); // O GPIO 28 corresponde ao canal ADC2
 };
 
 float get_temp() {

@@ -28,8 +28,8 @@ ssd1306_t display;
 
 // Definições de Rede
 #define WIFI_SSID "moto g(9) power_6168"
-#define WIFI_PASSWORD "ENZOMELO10"
-#define SERVER_PORT 8050
+#define WIFI_PASSWORD "ENZOMELO1000"
+#define SERVER_PORT 3000
 
 // Variável global para armazenar a temperatura do servidor
 float server_temperature = 0.0f;

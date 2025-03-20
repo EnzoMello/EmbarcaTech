@@ -61,6 +61,7 @@ target_link_libraries(temp_oled
         hardware_uart
         pico-ssd1306
         pico_cyw43_arch_lwip_threadsafe_background
+        hardware_pwm
         )
 
 pico_add_extra_outputs(temp_oled)

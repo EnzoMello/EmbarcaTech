@@ -7,6 +7,7 @@
 #include "lwip/tcp.h"
 #include "lwip/dhcp.h"
 #include "lwip/timeouts.h"
+#include "hardware/pwm.h"
 
 // Definições do display SSD1306
 #define SCREEN_WIDTH 128
@@ -24,6 +25,9 @@
 #define BUTTON_HOT_PIN 5
 #define BUTTON_COLD_PIN 6
 
+// BUZZER
+#define BUZZER_PIN 10
+
 ssd1306_t display;
 
 // Definições de Rede
@@ -33,14 +37,36 @@ ssd1306_t display;
 
 // Variável global para armazenar a temperatura do servidor
 float server_temperature = 0.0f;
+// Variáveis globais pra armazenar estados dos LEDS e usar com os botões
+volatile bool led_red_blinking = false;
+volatile bool led_blue_blinking = false;
 
 // Limite de discrepância para alerta
-#define TEMPERATURE_ALERT_LIMIT 10.0f  // Limite de 5°C para alerta
+#define TEMPERATURE_ALERT_LIMIT 5.0f  // Limite de 10°C para alerta
 
 void display_message(const char *message) {
+    char buffer[32];
+    int line = 0;
+
     ssd1306_clear(&display);
-    ssd1306_draw_string(&display, 10, 25, 1, message);
+
+    // Quebra a mensagem de alerta em várias linhas, se necessário
+    int alert_length = strlen(message);
+    int start = 0;
+    while (start < alert_length) {
+        char temp_msg[32];
+        int len = (alert_length - start > 16) ? 17 : alert_length - start;  // Limita a 16 caracteres por linha
+        strncpy(temp_msg, message + start, len);
+        temp_msg[len] = '\0';  // Garantir a terminação nula
+
+        ssd1306_draw_string(&display, 0, line * 10, 1, temp_msg);
+        line++;
+
+        start += len;
+    }
+
     ssd1306_show(&display);
+
 }
 
 
@@ -81,14 +107,24 @@ void my_callback_function(uint pin, uint32_t event) {
 
     // caso a interrupção tenha vindo do botão A
     if (pin == BUTTON_HOT_PIN) {
+        if (led_red_blinking) {
+            printf("Botão A bloqueado por que não corresponde ao seu LED.");
+            return;
+        }
+
         printf("\nbotão B pressionado\n");
-        display_message("Mantenha-se hidratado!");
+        display_message("Fique aquecido e veja o alerta no Telegram.");
     }
     
     // caso a interrupção tenha vindo do botão B
     if(pin == BUTTON_COLD_PIN) {
+        if (led_blue_blinking) {
+            printf("Botão B bloqueado por que não corresponde ao seu LED.");
+            return;
+        }
+
         printf("\nbotão A pressionado\n");
-        display_message("Mantenha-se aquecido!");
+        display_message("Se hidrate e veja o alerta no Telegram.");
     }
 }
 
@@ -119,7 +155,31 @@ float get_temp() {
     return temperature;
 }
 
+// Função para configurar o buzzer como alerta
+void buzzer_alert(float discrepancy) {
+    if (discrepancy > TEMPERATURE_ALERT_LIMIT) {
+        gpio_put(BUZZER_PIN, 1);
+        sleep_ms(300);
+        gpio_put(BUZZER_PIN, 0);
+        sleep_ms(300);
+    } else if (discrepancy < -TEMPERATURE_ALERT_LIMIT) {
+        gpio_put(BUZZER_PIN, 1);
+        sleep_ms(200);
+        gpio_put(BUZZER_PIN, 0);
+        sleep_ms(200);
+    
+    } else {
+    // Temperatura dentro do limite
+    gpio_put(BUZZER_PIN, 0);
+    }
+}
 
+// Função para configurar o buzzer como entrada
+void setup_buzzer() {
+    gpio_init(BUZZER_PIN);
+    gpio_set_dir(BUZZER_PIN, GPIO_OUT);
+    gpio_put(BUZZER_PIN, 0);  // Começa desligado
+}
 
 // Função para configurar os botões como entradas
 void setup_buttons() {
@@ -141,6 +201,13 @@ void control_led_alert(float sensor_temp, float server_temp, int *led_state, int
     // Tempo de controle para piscar os LEDs (em milissegundos)
     int current_time = to_ms_since_boot(get_absolute_time());
 
+
+    // Resetar os estados dos LEDs
+    led_red_blinking = false;
+    led_blue_blinking = false;
+    
+    buzzer_alert(discrepancy);
+
     if (discrepancy > TEMPERATURE_ALERT_LIMIT) {
         // Alerta de calor - Pisca LED vermelho
         if (current_time - *last_change_time > 200) {  // Piscar a cada 200 ms
@@ -150,6 +217,8 @@ void control_led_alert(float sensor_temp, float server_temp, int *led_state, int
             gpio_put(LED_G_PIN, 0);
             *last_change_time = current_time;
         }
+        led_red_blinking = true;
+        
     } else if (discrepancy < -TEMPERATURE_ALERT_LIMIT) {
         // Alerta de frio - Pisca LED azul
         if (current_time - *last_change_time > 200) {  // Piscar a cada 200 ms
@@ -159,11 +228,14 @@ void control_led_alert(float sensor_temp, float server_temp, int *led_state, int
             gpio_put(LED_G_PIN, 0);
             *last_change_time = current_time;
         }
+        led_blue_blinking = true;
     } else {
         // Temperatura dentro do limite - LED verde
         gpio_put(LED_R_PIN, 0);
         gpio_put(LED_B_PIN, 0);
         gpio_put(LED_G_PIN, 1);
+        led_red_blinking = true;
+        led_blue_blinking = true;
     }
 }
 
@@ -258,8 +330,10 @@ int main() {
     gpio_set_dir(LED_B_PIN, GPIO_OUT);
     gpio_set_dir(LED_G_PIN, GPIO_OUT);
 
-    // Inicializar os botões
+    // Inicializar os botões e o buzzer
     setup_buttons();
+    setup_buzzer();
+
 
     // Inicializar Wi-Fi
     printf("Iniciando WiFi...\n");
@@ -291,9 +365,9 @@ int main() {
         // Verificar a discrepância e gerar o alerta
         float discrepancy = sensor_temperature - server_temperature;
         if (discrepancy > TEMPERATURE_ALERT_LIMIT) {
-            snprintf(alert_message, sizeof(alert_message), "ALERTA-> Calor local prejudicial, aperte botao B");
+            snprintf(alert_message, sizeof(alert_message), "ALERTA-> Calor ambiente prejudicial, aperte botao B");
         } else if (discrepancy < -TEMPERATURE_ALERT_LIMIT) {
-            snprintf(alert_message, sizeof(alert_message), "ALERTA-> Frio local prejudicial, aperte botao A");
+            snprintf(alert_message, sizeof(alert_message), "ALERTA-> Frio ambiente prejudicial, aperte botao A");
         } else {
             snprintf(alert_message, sizeof(alert_message), "Temperatura ambiente segura");
         }

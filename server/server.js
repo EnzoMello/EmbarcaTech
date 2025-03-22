@@ -12,7 +12,7 @@ const BITDOG_PORT = 3000; // Porta usada para comunicação
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const TEMPERATURE_ALERT_LIMIT = 5; // Defina o limite de variação aceitável
-let tempLocal = null;
+let tempLocal = 20.0;
 
 
 app.use(cors()); // Habilita CORS para permitir requisições do frontend
@@ -37,6 +37,20 @@ app.post('/temperatura/local', (req, res) => {
     res.json({ mensagem: "Temperatura local recebida com sucesso", temperaturaLocal });
 });
 
+app.post('/api/temperatura', (req, res) => {
+    const temperatura = req.body.temperature;  // O nome da chave do JSON é "temperature"
+  
+    if (temperatura !== undefined) {
+      console.log(`Temperatura recebida: ${temperatura}°C`);
+      
+      tempLocal = temperatura;
+  
+      res.status(200).send({ message: "Temperatura recebida com sucesso!" });
+    } else {
+      res.status(400).send({ message: "Temperatura não encontrada no corpo da requisição!" });
+    }
+  });
+
 app.post('/temperatura', async (req, res) => {
     const { cidade } = req.body;
     
@@ -47,6 +61,7 @@ app.post('/temperatura', async (req, res) => {
     try {
         const url = `https://api.openweathermap.org/data/2.5/weather?q=${cidade}&units=metric&appid=${API_KEY}&lang=pt_br`;
         const resposta = await axios.get(url);
+        
         const temperatura = resposta.data.main.temp;
         const dataAtual = new Date().toLocaleDateString('pt-BR');
         const horaAtual = new Date().toLocaleTimeString('pt-BR');
@@ -73,11 +88,12 @@ app.post('/temperatura', async (req, res) => {
                 alerta = "✅ Clima estável. Nenhum risco detectado.";
             }
 
-            enviarAlertaTelegram(alerta);
+            await enviarAlertaTelegram(alerta);
         }
 
         res.json({ cidade, temperatura });
     } catch (erro) {
+        console.log(erro.message);
         res.status(500).json({ erro: "Erro ao buscar temperatura" });
     }
 });
@@ -101,28 +117,22 @@ app.listen(PORT, () => {
 });
 
 async function enviarAlertaTelegram(mensagem) {
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
 
     try {
-    const resposta = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        const resposta = await axios.post(url, {
             chat_id: TELEGRAM_CHAT_ID,
             text: mensagem
-        })
-    });
+        });
 
-    const dados = await resposta.json();
-    if (!dados.ok) {
-        console.error("Erro ao enviar mensagem para o Telegram:", dados);
-    } else {
-        console.log("Mensagem enviada ao Telegram:", mensagem);
+        if (!resposta.data.ok) {
+            console.error("Erro ao enviar mensagem para o Telegram:", resposta.data);
+        } else {
+            console.log("Mensagem enviada ao Telegram:", mensagem);
+        }
+    } catch (error) {
+        console.error("Erro ao conectar ao Telegram:", error.message);
     }
-
-} catch (error) {
-    console.log(error.message);
-}
 }
 
 function gerarMensagemCalor(cidade, temperatura, temperaturaLocal, data, hora, discrepancy) {

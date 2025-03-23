@@ -1,16 +1,18 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
-#include "hardware/adc.h"
-#include "ssd1306.h"
+#include "hardware/adc.h" // Leituras dos pinos ADC da placa e seus valores
+#include "ssd1306.h" // Controla o display OLED SSD1306 para exibir informações na tela
 #include "hardware/uart.h"
-#include "pico/cyw43_arch.h"
-#include "lwip/tcp.h"
+// Bibliotecas para conexão Wi-Fi e comunicação com o servidor
+#include "pico/cyw43_arch.h" // Controla o módulo Wi-Fi CYW43439 da Raspberry Pi Pico W
+#include "lwip/tcp.h" // Gerencia conexões TCP/IP (usado para enviar temperatura para o backend)
 #include "lwip/dhcp.h"
-#include "lwip/pbuf.h"
+#include "lwip/pbuf.h" // Manipula buffers de pacotes de rede (auxilia na transmissão e recepção de dados)
 #include "lwip/dns.h"
-#
 #include "lwip/timeouts.h"
-#include "hardware/pwm.h"
+#include "lwip/ip_addr.h"
+#include "lwip/pbuf.h"
+#include "hardware/pwm.h" // Biblioteca para controlar PWM em alertas sonoros e visuais
 
 // Definições do display SSD1306
 #define SCREEN_WIDTH 128
@@ -38,19 +40,19 @@ ssd1306_t display;
 #define WIFI_PASSWORD "ENZOMELO1000"
 #define SERVER_PORT 3000
 #define SERVER_IP "192.168.26.35"
-#define SERVER_PATH "/enviar-dados"
 
-#define MAX_REQUEST_LEN 512
-#define MAX_RESPONSE_LEN 512
+#define BUFFER_SIZE 256
+
 
 // Variável global para armazenar a temperatura do servidor
 float server_temperature = 0.0f;
+
 // Variáveis globais pra armazenar estados dos LEDS e usar com os botões
 volatile bool led_red_blinking = false;
 volatile bool led_blue_blinking = false;
 
 // Limite de discrepância para alerta
-#define TEMPERATURE_ALERT_LIMIT 5.0f  // Limite de 10°C para alerta
+#define TEMPERATURE_ALERT_LIMIT 5.0f  // 
 
 void display_message(const char *message) {
     char buffer[32];
@@ -167,14 +169,14 @@ float get_temp() {
 void buzzer_alert(float discrepancy) {
     if (discrepancy > TEMPERATURE_ALERT_LIMIT) {
         gpio_put(BUZZER_PIN, 1);
-        sleep_ms(300);
+        sleep_ms(50);
         gpio_put(BUZZER_PIN, 0);
-        sleep_ms(300);
+        sleep_ms(50);
     } else if (discrepancy < -TEMPERATURE_ALERT_LIMIT) {
         gpio_put(BUZZER_PIN, 1);
-        sleep_ms(200);
+        sleep_ms(100);
         gpio_put(BUZZER_PIN, 0);
-        sleep_ms(200);
+        sleep_ms(100);
     
     } else {
     // Temperatura dentro do limite
@@ -218,7 +220,7 @@ void control_led_alert(float sensor_temp, float server_temp, int *led_state, int
 
     if (discrepancy > TEMPERATURE_ALERT_LIMIT) {
         // Alerta de calor - Pisca LED vermelho
-        if (current_time - *last_change_time > 200) {  // Piscar a cada 200 ms
+        if (current_time - *last_change_time > 100) {  // Piscar a cada 200 ms
             *led_state = !*led_state;  // Alterna o estado do LED
             gpio_put(LED_R_PIN, *led_state);
             gpio_put(LED_B_PIN, 0);
@@ -229,7 +231,7 @@ void control_led_alert(float sensor_temp, float server_temp, int *led_state, int
         
     } else if (discrepancy < -TEMPERATURE_ALERT_LIMIT) {
         // Alerta de frio - Pisca LED azul
-        if (current_time - *last_change_time > 200) {  // Piscar a cada 200 ms
+        if (current_time - *last_change_time > 100) {  // Piscar a cada 200 ms
             *led_state = !*led_state;  // Alterna o estado do LED
             gpio_put(LED_R_PIN, 0);
             gpio_put(LED_B_PIN, *led_state);
@@ -259,6 +261,20 @@ err_t tcp_recv_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t e
         // Recebe a temperatura do servidor e converte para float
         server_temperature = atof(buffer);
         printf("Temperatura do servidor recebida: %.2f C\n", server_temperature);
+
+        float temperatura_local = get_temp();  // Suponha que get_temp() retorna a temperatura da placa
+        char response[50];
+        snprintf(response, sizeof(response), "%.2f", temperatura_local);
+
+        // Enviar temperatura da placa de volta ao servidor
+        err_t write_err = tcp_write(tpcb, response, strlen(response), TCP_WRITE_FLAG_COPY);
+        if (write_err != ERR_OK) {
+            printf("Erro ao enviar temperatura para o servidor\n");
+        } else {
+            printf("Temperatura local enviada para o servidor: %.2f C\n", temperatura_local);
+        }
+        // Garantir envio imediato
+        tcp_output(tpcb);
 
         // Liberar buffer
         pbuf_free(p);
@@ -311,139 +327,51 @@ void tcp_server(void) {
     printf("Servidor TCP iniciado na porta %d.\n", SERVER_PORT);
 }
 
-typedef struct {
+void send_temperature(float temperature) {
     struct tcp_pcb *pcb;
-    bool complete;
-    bool connected;
-    char request[MAX_REQUEST_LEN];
-    char response[MAX_RESPONSE_LEN];
-    size_t response_len;
-    ip_addr_t remote_addr;
-} HTTP_CLIENT_T;
-
-static err_t tcp_client_connected(void *arg, struct tcp_pcb *tpcb, err_t err);
-static err_t tcp_client_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
-static err_t tcp_client_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
-static void tcp_client_close(HTTP_CLIENT_T *state);
-
-static err_t tcp_client_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
-    HTTP_CLIENT_T *state = (HTTP_CLIENT_T*)arg;
-
-    if (!p) {
-        state->complete = true;
-        return ERR_OK;
+    struct pbuf *p;
+    char request[BUFFER_SIZE];
+    
+    pcb = tcp_new();
+    if (!pcb) {
+        printf("Erro ao criar socket TCP\n");
+        return;
     }
 
-    if (p->tot_len > 0) {
-        size_t to_copy = (p->tot_len < MAX_RESPONSE_LEN - state->response_len - 1) ? p->tot_len : MAX_RESPONSE_LEN - state->response_len - 1;
-        pbuf_copy_partial(p, state->response + state->response_len, to_copy, 0);
-        state->response_len += to_copy;
-        state->response[state->response_len] = '\0';
-    }
+    ip_addr_t server_addr;
+    ip4addr_aton(SERVER_IP, &server_addr);  // Substitua por IP do servidor Express
 
-    tcp_recved(tpcb, p->tot_len);
-    pbuf_free(p);
-    return ERR_OK;
-}
-
-static err_t tcp_client_sent(void *arg, struct tcp_pcb *tpcb, u16_t len) {
-    return ERR_OK;
-}
-
-static err_t tcp_client_connected(void *arg, struct tcp_pcb *tpcb, err_t err) {
-    if (err != ERR_OK) {
-        printf("Erro ao conectar: %d\n", err);
-        return err;
-    }
-
-    HTTP_CLIENT_T *state = (HTTP_CLIENT_T*)arg;
-    state->connected = true;
-
-    err = tcp_write(tpcb, state->request, strlen(state->request), TCP_WRITE_FLAG_COPY);
-    if (err != ERR_OK) {
-        printf("Erro ao enviar requisição: %d\n", err);
-        return err;
-    }
-
-    err = tcp_output(tpcb);
-    return err;
-}
-
-static void tcp_client_close(HTTP_CLIENT_T *state) {
-    if (state->pcb) {
-        tcp_close(state->pcb);
-        state->pcb = NULL;
-    }
-}
-
-bool send_http_json(float temperature) {
-    temperature = get_temp();
-
-    HTTP_CLIENT_T *state = (HTTP_CLIENT_T*)calloc(1, sizeof(HTTP_CLIENT_T));
-    if (!state) {
-        printf("Erro ao alocar memória\n");
-        return false;
-    }
-
-    char json_data[256];
-    snprintf(json_data, sizeof(json_data),
-             "{\"temperature\": %.2f,}",
-            temperature);
-
-    snprintf(state->request, MAX_REQUEST_LEN,
-             "POST %s HTTP/1.1\r\n"
-             "Host: %s\r\n"
-             "Content-Type: application/json\r\n"
-             "Content-Length: %d\r\n"
-             "Connection: close\r\n"
-             "\r\n"
-             "%s",
-             SERVER_PATH, SERVER_IP, (int)strlen(json_data), json_data);
-
-    printf("Enviando JSON para API...\n%s\n", state->request);
-
-    ip_addr_t remote_addr;
-    if (!ipaddr_aton(SERVER_IP, &remote_addr)) {
-        printf("Erro ao resolver IP\n");
-        free(state);
-        return false;
-    }
-    state->remote_addr = remote_addr;
-
-    state->pcb = tcp_new();
-    if (!state->pcb) {
-        printf("Erro ao criar PCB TCP\n");
-        free(state);
-        return false;
-    }
-
-    tcp_arg(state->pcb, state);
-    tcp_recv(state->pcb, tcp_client_recv);
-    tcp_sent(state->pcb, tcp_client_sent);
-
-    err_t err = tcp_connect(state->pcb, &state->remote_addr, SERVER_PORT, tcp_client_connected);
-    if (err != ERR_OK) {
-        printf("Erro ao conectar ao servidor: %d\n", err);
-        tcp_client_close(state);
-        free(state);
-        return false;
-    }
-
-    uint32_t start_time = to_ms_since_boot(get_absolute_time());
-    while (!state->complete && (to_ms_since_boot(get_absolute_time()) - start_time < 10000)) {
-        sleep_ms(100);
-    }
-
-    bool success = state->complete;
-    if (success) {
-        printf("Resposta da API: %s\n", state->response);
+    if (tcp_connect(pcb, &server_addr, SERVER_PORT, NULL) != ERR_OK) {
+        printf("Erro ao conectar ao servidor\n");
+        return;
     } else {
-        printf("Falha ao enviar JSON\n");
+        printf("Conectado ao servidor e ao WIFI.\n.");
     }
 
-    tcp_client_close(state);
-    free(state);
-    return success;
+    // Formatar o pedido HTTP
+    int content_length = snprintf(NULL, 0, "{\"temperature\":%.2f}", temperature);
+    content_length += 1;  // Calcula o comprimento do conteúdo JSON
+    snprintf(request, sizeof(request),
+            "POST /receberTemperaturaPlaca HTTP/1.1\r\n"
+            "Host: 192.168.26.35:3000\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: %d\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"temperature\":%.2f}",
+            content_length, temperature);  // Inclui o valor correto no Content-Length
+
+    p = pbuf_alloc(PBUF_TRANSPORT, strlen(request), PBUF_RAM);
+    memcpy(p->payload, request, strlen(request));
+
+    err_t write_err = tcp_write(pcb, p->payload, p->len, TCP_WRITE_FLAG_COPY);
+    if (write_err != ERR_OK) {
+        printf("Erro ao enviar dados: %d\n", write_err);
+    }
+    tcp_output(pcb);
+
+    pbuf_free(p);
+    tcp_close(pcb);
 }
 
 int main() {

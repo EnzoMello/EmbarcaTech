@@ -12,7 +12,6 @@ const BITDOG_PORT = 3000; // Porta usada para comunicação
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const TEMPERATURE_ALERT_LIMIT = 5; // Defina o limite de variação aceitável
-let tempLocal = 20.0;
 
 
 app.use(cors()); // Habilita CORS para permitir requisições do frontend
@@ -23,39 +22,13 @@ app.use(express.static('frontend'));
 console.log("TELEGRAM_BOT_TOKEN:", TELEGRAM_BOT_TOKEN);
 console.log("TELEGRAM_CHAT_ID:", TELEGRAM_CHAT_ID);
 
-app.post('/temperatura/local', (req, res) => {
-    const { temperaturaLocal } = req.body;
 
-    if (temperaturaLocal === undefined || temperaturaLocal === null) {
-        return res.status(400).json({ erro: "Temperatura local não fornecida" });
-    }
-
-    tempLocal = temperaturaLocal; // Armazena a temperatura recebida
-
-    console.log(`Temperatura local atualizada: ${temperaturaLocal}°C`);
-
-    res.json({ mensagem: "Temperatura local recebida com sucesso", temperaturaLocal });
-});
-
-app.post('/api/temperatura', (req, res) => {
-    const temperatura = req.body.temperature;  // O nome da chave do JSON é "temperature"
-  
-    if (temperatura !== undefined) {
-      console.log(`Temperatura recebida: ${temperatura}°C`);
-      
-      tempLocal = temperatura;
-  
-      res.status(200).send({ message: "Temperatura recebida com sucesso!" });
-    } else {
-      res.status(400).send({ message: "Temperatura não encontrada no corpo da requisição!" });
-    }
-  });
 
 app.post('/temperatura', async (req, res) => {
-    const { cidade } = req.body;
+    const { cidade, tempLocal } = req.body;
     
-    if (!cidade) {
-        return res.status(400).json({ erro: "Cidade não fornecida" });
+    if (!cidade || tempLocal === undefined) {
+        return res.status(400).json({ erro: "Cidade e temperatura local são obrigatórias." });
     }
 
     try {
@@ -82,7 +55,7 @@ app.post('/temperatura', async (req, res) => {
             let alerta;
             if (discrepancy > TEMPERATURE_ALERT_LIMIT) {
                 alerta = `${gerarMensagemCalor(cidade, temperatura, temperaturaLocal, dataAtual, horaAtual, discrepancy)}`;
-            } else if (discrepancy < -TEMPERATURE_ALERT_LIMIT) {
+            } else if (discrepancy < TEMPERATURE_ALERT_LIMIT) {
                 alerta = `${gerarMensagemFrio(cidade, temperatura, temperaturaLocal, dataAtual, horaAtual, discrepancy)}`;
             } else {
                 alerta = "✅ Clima estável. Nenhum risco detectado.";
@@ -104,11 +77,25 @@ function enviarParaPlaca(temperatura) {
     cliente.connect(BITDOG_PORT, BITDOG_IP, () => {
         console.log(`Enviando temperatura: ${temperatura}°C`);
         cliente.write(temperatura.toString());
-        cliente.end();
     });
+
+    cliente.on('data', (data) => {
+        const temperaturaRecebida = parseFloat(data.toString()); // Converte a resposta para número
+        if (!isNaN(temperaturaRecebida)) {
+            tempLocal = temperaturaRecebida; // Atualiza a variável global
+            console.log(`⚡ Temperatura local atualizada: ${tempLocal}°C`);
+        } else {
+            console.warn('🚨 Dados recebidos da placa não são numéricos:', data.toString());
+        }
+    });
+    
 
     cliente.on('error', (err) => {
         console.error('Erro na conexão TCP:', err);
+    });
+
+    cliente.on('close', () => {
+        console.log('Conexão encerrada.');
     });
 }
 
@@ -133,6 +120,33 @@ async function enviarAlertaTelegram(mensagem) {
     } catch (error) {
         console.error("Erro ao conectar ao Telegram:", error.message);
     }
+}
+
+
+function getTemperatureFromBoard() {
+    return new Promise((resolve, reject) => {
+        const client = new net.Socket();
+
+        client.connect(3000, '192.168.26.47', () => {  // Substitua pelo IP real da placa
+            console.log("Conectado à placa, solicitando temperatura...");
+            client.write("GET_TEMP");  // Mensagem simbólica, a placa ignora isso
+        });
+
+        client.on('data', (data) => {
+            console.log("Temperatura recebida da placa:", data.toString());
+            client.destroy();  // Fecha conexão
+            resolve(JSON.parse(data.toString()).temperature);
+        });
+
+        client.on('error', (err) => {
+            console.error("Erro na conexão com a placa:", err);
+            reject(err);
+        });
+
+        client.on('close', () => {
+            console.log("Conexão encerrada");
+        });
+    });
 }
 
 function gerarMensagemCalor(cidade, temperatura, temperaturaLocal, data, hora, discrepancy) {

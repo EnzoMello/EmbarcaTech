@@ -11,7 +11,8 @@
         <h1>Monitoramento Climático</h1>
         <p>Digite o nome da cidade para obter a temperatura e enviá-la para o dispositivo.</p>
         <input type="text" id="cidade" placeholder="Digite a cidade...">
-        <button onclick="buscarTemperatura()">Buscar</button>
+        <input type="number" id="tempLocal" placeholder="Temperatura do sensor (°C)">
+        <button onclick="buscarTemperatura()">Enviar</button>
         <div id="resultado"></div>
     </div>
     <script src="script.js"></script>

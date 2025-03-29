@@ -35,7 +35,15 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(temp_oled temp_oled.c )
+add_executable(temp_oled 
+    temp_oled.c
+    utils/Buttons/Buttons.c
+    utils/Buzzer/Buzzer.c
+    utils/Display/Display.c
+    utils/LED/LED.c
+    utils/Tmp36/tmp.c
+    utils/WIFI/wifi.c
+)
 
 pico_set_program_name(temp_oled "temp_oled")
 pico_set_program_version(temp_oled "0.1")

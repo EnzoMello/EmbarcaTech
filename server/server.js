@@ -11,7 +11,7 @@ const BITDOG_IP = '192.168.26.47'; // Ajuste para o IP da sua placa
 const BITDOG_PORT = 3000; // Porta usada para comunicação
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const TEMPERATURE_ALERT_LIMIT = 5; // Defina o limite de variação aceitável
+const TEMPERATURE_ALERT_LIMIT = 1.5; // Defina o limite de variação aceitável
 
 
 app.use(cors()); // Habilita CORS para permitir requisições do frontend
@@ -55,7 +55,7 @@ app.post('/temperatura', async (req, res) => {
             let alerta;
             if (discrepancy > TEMPERATURE_ALERT_LIMIT) {
                 alerta = `${gerarMensagemCalor(cidade, temperatura, temperaturaLocal, dataAtual, horaAtual, discrepancy)}`;
-            } else if (discrepancy < TEMPERATURE_ALERT_LIMIT) {
+            } else if (discrepancy < -TEMPERATURE_ALERT_LIMIT) {
                 alerta = `${gerarMensagemFrio(cidade, temperatura, temperaturaLocal, dataAtual, horaAtual, discrepancy)}`;
             } else {
                 alerta = "✅ Clima estável. Nenhum risco detectado.";

@@ -9,6 +9,7 @@
 #include "utils/LED/LED.h"
 #include "utils/Tmp36/tmp.h"
 #include "utils/WIFI/wifi.h"
+#include "utils/Server_Connection/Server.h"
 
 
 
@@ -23,7 +24,7 @@
 #include "hardware/pwm.h" // Biblioteca para controlar PWM em alertas sonoros e visuais
 
 
-#define SERVER_PORT 3000
+#define SERVER_PORT 8050
 #define SERVER_IP "192.168.26.35"
 
 
@@ -128,14 +129,7 @@ err_t tcp_recv_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t e
         snprintf(response, sizeof(response), "%.2f", temperatura_local);
 
         // Enviar temperatura da placa de volta ao servidor
-        err_t write_err = tcp_write(tpcb, response, strlen(response), TCP_WRITE_FLAG_COPY);
-        if (write_err != ERR_OK) {
-            printf("Erro ao enviar temperatura para o servidor\n");
-        } else {
-            printf("Temperatura local enviada para o servidor: %.2f C\n", temperatura_local);
-        }
-        // Garantir envio imediato
-        tcp_output(tpcb);
+        create_request(temperatura_local);
 
         // Liberar buffer
         pbuf_free(p);

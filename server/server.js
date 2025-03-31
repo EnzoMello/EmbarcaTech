@@ -2,74 +2,90 @@ const express = require('express');
 const axios = require('axios');
 const net = require('net');
 const cors = require('cors'); // Importa o CORS
+const { console } = require('inspector');
 require('dotenv').config();
 
 const app = express();
 const PORT = 3000;
 const API_KEY = '5d30ae41d98933aef6c4a1dd07a83f69';
 const BITDOG_IP = '192.168.26.47'; // Ajuste para o IP da sua placa
-const BITDOG_PORT = 3000; // Porta usada para comunicação
+const BITDOG_PORT = 8050; // Porta usada para comunicação
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const TEMPERATURE_ALERT_LIMIT = 1.5; // Defina o limite de variação aceitável
 
 
+let cidade, temperaturaCidade, temperaturaLocal, dataAtual, horaAtual, discrepancy;
+
+let tempPlaca = 0.0;
+
 app.use(cors()); // Habilita CORS para permitir requisições do frontend
 app.use(express.json());
 app.use(express.static('frontend'));
 
-// Debug para verificar se as variáveis estão carregadas corretamente
-console.log("TELEGRAM_BOT_TOKEN:", TELEGRAM_BOT_TOKEN);
-console.log("TELEGRAM_CHAT_ID:", TELEGRAM_CHAT_ID);
+app.listen(PORT, () => {
+    console.log(`Servidor rodando na porta ${PORT}`);
+});
 
 
+app.post('/receiveTemp', async (req, res) => {
+    const { temperatura } = req.body;
+
+    console.log(`${temperatura}`);
+
+    
+    const temperaturaLocal = temperatura;
+
+
+    if (temperaturaLocal !== null) {
+        console.log(`Temperatura local: ${temperaturaLocal}°C`);
+
+        // Compara as temperaturas e decide se envia alerta
+        const discrepancy = temperaturaLocal - temperaturaCidade;
+
+        let alerta;
+        if (discrepancy > TEMPERATURE_ALERT_LIMIT) {
+            alerta = `${gerarMensagemCalor(cidade, temperaturaCidade, temperaturaLocal, dataAtual, horaAtual, discrepancy)}`;
+        } else if (discrepancy < -TEMPERATURE_ALERT_LIMIT) {
+            alerta = `${gerarMensagemFrio(cidade, temperaturaCidade, temperaturaLocal, dataAtual, horaAtual, discrepancy)}`;
+        } else {
+            alerta = "✅ Clima estável. Nenhum risco detectado.";
+        }
+
+        await enviarAlertaTelegram(alerta);
+    }
+
+    res.json({temperatura});
+    
+})
 
 app.post('/temperatura', async (req, res) => {
-    const { cidade, tempLocal } = req.body;
-    
-    if (!cidade || tempLocal === undefined) {
-        return res.status(400).json({ erro: "Cidade e temperatura local são obrigatórias." });
+    cidade  = req.body.cidade;
+
+    if (!cidade === undefined) {
+        return res.status(400).json({ erro: "Cidade são obrigatórias." });
     }
 
     try {
         const url = `https://api.openweathermap.org/data/2.5/weather?q=${cidade}&units=metric&appid=${API_KEY}&lang=pt_br`;
         const resposta = await axios.get(url);
         
-        const temperatura = resposta.data.main.temp;
-        const dataAtual = new Date().toLocaleDateString('pt-BR');
-        const horaAtual = new Date().toLocaleTimeString('pt-BR');
+        temperaturaCidade = resposta.data.main.temp;
+        dataAtual = new Date().toLocaleDateString('pt-BR');
+        horaAtual = new Date().toLocaleTimeString('pt-BR');
 
-        console.log(`Temperatura em ${cidade}: ${temperatura}°C`);
-        enviarParaPlaca(temperatura);
+        console.log(`Temperatura em ${cidade}: ${temperaturaCidade}°C`);
+        enviarParaPlaca(temperaturaCidade);
+       
 
-        // Obtém a temperatura local da placa
-        const temperaturaLocal = tempLocal;
-
-
-        if (temperaturaLocal !== null) {
-            console.log(`Temperatura local: ${temperaturaLocal}°C`);
-
-            // Compara as temperaturas e decide se envia alerta
-            const discrepancy = temperaturaLocal - temperatura;
-
-            let alerta;
-            if (discrepancy > TEMPERATURE_ALERT_LIMIT) {
-                alerta = `${gerarMensagemCalor(cidade, temperatura, temperaturaLocal, dataAtual, horaAtual, discrepancy)}`;
-            } else if (discrepancy < -TEMPERATURE_ALERT_LIMIT) {
-                alerta = `${gerarMensagemFrio(cidade, temperatura, temperaturaLocal, dataAtual, horaAtual, discrepancy)}`;
-            } else {
-                alerta = "✅ Clima estável. Nenhum risco detectado.";
-            }
-
-            await enviarAlertaTelegram(alerta);
-        }
-
-        res.json({ cidade, temperatura });
+        res.json({ cidade, temperaturaCidade });
     } catch (erro) {
         console.log(erro.message);
         res.status(500).json({ erro: "Erro ao buscar temperatura" });
     }
 });
+
+
 
 function enviarParaPlaca(temperatura) {
     const cliente = new net.Socket();
@@ -99,9 +115,6 @@ function enviarParaPlaca(temperatura) {
     });
 }
 
-app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
-});
 
 async function enviarAlertaTelegram(mensagem) {
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
@@ -122,32 +135,6 @@ async function enviarAlertaTelegram(mensagem) {
     }
 }
 
-
-function getTemperatureFromBoard() {
-    return new Promise((resolve, reject) => {
-        const client = new net.Socket();
-
-        client.connect(3000, '192.168.26.47', () => {  // Substitua pelo IP real da placa
-            console.log("Conectado à placa, solicitando temperatura...");
-            client.write("GET_TEMP");  // Mensagem simbólica, a placa ignora isso
-        });
-
-        client.on('data', (data) => {
-            console.log("Temperatura recebida da placa:", data.toString());
-            client.destroy();  // Fecha conexão
-            resolve(JSON.parse(data.toString()).temperature);
-        });
-
-        client.on('error', (err) => {
-            console.error("Erro na conexão com a placa:", err);
-            reject(err);
-        });
-
-        client.on('close', () => {
-            console.log("Conexão encerrada");
-        });
-    });
-}
 
 function gerarMensagemCalor(cidade, temperatura, temperaturaLocal, data, hora, discrepancy) {
     return ` 🚨 ALERTA DE CALOR AMBIENTE PREJUDICIAL 🚨

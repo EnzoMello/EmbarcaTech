@@ -43,6 +43,8 @@ add_executable(temp_oled
     utils/LED/LED.c
     utils/Tmp36/tmp.c
     utils/WIFI/wifi.c
+    utils/Server_Connection/Server.c
+
 )
 
 pico_set_program_name(temp_oled "temp_oled")
